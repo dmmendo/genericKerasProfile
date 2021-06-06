@@ -1,11 +1,14 @@
 #import tensorflow as tf
-from tensorflow import keras
+#from tensorflow import keras
+from keras.models import load_model
+from keras.backend import clear_session
 
 import numpy as np
 import multiprocessing as mp
 import psutil
 import time
 import os
+import sys
 
 #tune intra, inter parallel parameters
 #session_conf = tf.ConfigProto(intra_op_parallelism_threads=1,inter_op_parallelism_threads=1)
@@ -22,8 +25,8 @@ def get_input_shape(model):
             in_shape.append(entry)
     return in_shape
 
-def run_model_predict(model_builder):
-    model = model_builder()
+def run_model_predict(model_file):
+    model = load_model(model_file)
     x = np.ones(get_input_shape(model))
 
     model.predict(x)
@@ -32,16 +35,15 @@ def run_model_predict(model_builder):
 
     while os.path.exists("model_rdy") is True:
         time.sleep(0.001)
-    start_t = time.time()
+
     model.predict(x)
-    print(time.time() - start_t)
 
-    keras.backend.clear_session()
+    clear_session()
 
-def profile_cpu_util(model): 
+def profile_cpu_util(model_file): 
     cpu_percents = []
 
-    worker_process = mp.Process(target=run_model_predict,args=(model,)) 
+    worker_process = mp.Process(target=run_model_predict,args=(model_file,)) 
     worker_process.start()
 
     p = psutil.Process(worker_process.pid)
@@ -61,8 +63,8 @@ def profile_cpu_util(model):
 
     return cpu_percents
 
-def profile_avg_cpu_util(model):
-    worker_process = mp.Process(target=run_model_predict,args=(model,)) 
+def profile_avg_cpu_util(model_file):
+    worker_process = mp.Process(target=run_model_predict,args=(model_file,)) 
     worker_process.start()
 
     while os.path.exists("model_rdy") is False:
@@ -81,10 +83,10 @@ def profile_avg_cpu_util(model):
 
     return avg_util
 
-def profile_mem_usage(model):
+def profile_mem_usage(model_file):
     mem_usage = []
 
-    worker_process = mp.Process(target=run_model_predict,args=(model,)) 
+    worker_process = mp.Process(target=run_model_predict,args=(model_file,)) 
     worker_process.start()
 
     p = psutil.Process(worker_process.pid)
@@ -105,8 +107,8 @@ def profile_mem_usage(model):
 
     return mem_usage
 
-def profile_runtime(model_builder,num_runs=1):
-    model = model_builder()
+def profile_runtime(model_file,num_runs=10):
+    model = load_model(model_file)
     x = np.ones(get_input_shape(model))
 
     model.predict(x)
@@ -118,15 +120,38 @@ def profile_runtime(model_builder,num_runs=1):
         end_t = time.time()
         runtimes.append(end_t - start_t)
     
-    keras.backend.clear_session()
+    clear_session()
     
     return np.median(runtimes)
 
+def output_data(data,out_file):
+    f = open(out_file,'a')
+    if type(data) == type(list()):
+        for i in range(len(data) - 1):
+            f.write(str(data[i]) + ',')
+        f.write(str(data[-1]) + '\n')
+    else:
+        f.write(str(data) + '\n')
+    f.close()
+
+dataset_dir = './gen_models/'
+model_name = 'uniform_nn_v1_1.h5'
+out_file = 'uniform_nn_v1.profl'
+
+model_file = sys.argv[2]
+
+profile_name = sys.argv[1]
+
+out_file = sys.argv[3]
 
 
-from tensorflow.keras.applications.mobilenet import MobileNet
-model=MobileNet
-#print(profile_cpu_util(model))
-#print(profile_avg_cpu_util(model))
-#print(profile_mem_usage(model))
-print(profile_runtime(model))
+if profile_name == 'cpu_util':
+    output_data(profile_cpu_util(model_file),out_file)
+elif profile_name == 'avg_cpu_util':
+    output_data(profile_avg_cpu_util(model_file),out_file)
+elif profile_name == 'mem_usage':
+    output_data(profile_mem_usage(model_file),out_file)
+elif profile_name == 'runtime':
+    output_data(profile_runtime(model_file),out_file)
+else:
+    print('ERROR: incorrect profile name')
